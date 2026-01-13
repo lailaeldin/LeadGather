@@ -1,92 +1,110 @@
-from pythonjsonlogger import jsonlogger
-from aiolimiter import AsyncLimiter
-from urllib.parse import urlparse
-import asyncio
-import aiohttp
-import logging
-import time
-from pprint import pprint as pp
-import random
-import aiofiles
+# network_monitor.py - Use this to find API calls
+import browser_cookie3
+import json
 
-logger = logging.getLogger(__name__)
-logger.setLevel(logging.INFO)
-logHandler = logging.StreamHandler()
-formatter = jsonlogger.JsonFormatter()
-logHandler.setFormatter(formatter)
-logger.addHandler(logHandler)
+def get_browser_cookies():
+    """Extract cookies from browser for authentication"""
+    try:
+        # Try Chrome first
+        cookies = browser_cookie3.chrome(domain_name='bizbuysell.com')
+        cookie_dict = {cookie.name: cookie.value for cookie in cookies}
+        print(f"Found {len(cookie_dict)} cookies from Chrome")
+        return cookie_dict
+    except:
+        try:
+            # Try Firefox
+            cookies = browser_cookie3.firefox(domain_name='bizbuysell.com')
+            cookie_dict = {cookie.name: cookie.value for cookie in cookies}
+            print(f"Found {len(cookie_dict)} cookies from Firefox")
+            return cookie_dict
+        except:
+            print("Could not extract browser cookies")
+            return {}
 
-async def HTTPClientDownloader(url, settings):
-    host = urlparse(url).hostname
-    max_tcp_connections = settings['max_tcp_connections']
+def analyze_network_traffic():
+    """
+    Instructions for manual API discovery:
+    1. Open Chrome DevTools (F12)
+    2. Go to Network tab
+    3. Filter by XHR or Fetch
+    4. Browse the site normally
+    5. Look for JSON responses
+    6. Copy as cURL command
+    """
+    
+    instructions = """
+    MANUAL API DISCOVERY STEPS:
+    ---------------------------
+    1. Open https://www.bizbuysell.com in Chrome
+    2. Press F12 to open DevTools
+    3. Go to Network tab
+    4. Check 'Preserve log' checkbox
+    5. Filter by XHR or Fetch
+    6. Perform a search on the website
+    7. Look for requests that return JSON data
+    8. Right-click on the request → Copy → Copy as cURL
+    9. Use the cURL command below to create Python code
+    """
+    
+    print(instructions)
 
-    async with settings['rate_per_host'][host]["limit"]:
-        connector = aiohttp.TCPConnector(limit=max_tcp_connections)
+# Example cURL to Python converter
+def curl_to_python(curl_command: str):
+    """Convert cURL command to Python requests code"""
+    import re
+    
+    # Parse headers
+    headers = {}
+    header_pattern = r"-H '([^:]+): ([^']+)'"
+    headers_match = re.findall(header_pattern, curl_command)
+    
+    for name, value in headers_match:
+        headers[name.strip()] = value.strip()
+    
+    # Parse URL
+    url_pattern = r"curl ['\"]?([^ '\"]+)['\"]?"
+    url_match = re.search(url_pattern, curl_command)
+    
+    if url_match:
+        url = url_match.group(1)
+        print(f"\nURL: {url}")
+        print("\nHeaders:", json.dumps(headers, indent=2))
+        
+        # Generate Python code
+        python_code = f'''
+import requests
 
-        async with aiohttp.ClientSession(connector=connector) as session:
-            start_time = time.perf_counter()  # Start timer
-            safari_agents = [
-                'Safari/17612.3.14.1.6 CFNetwork/1327.0.4 Darwin/21.2.0',  # works!
-            ]
-            user_agent = random.choice(safari_agents)
+headers = {headers}
 
-            headers = {
-                'User-Agent': user_agent
-            }
+response = requests.get(
+    "{url}",
+    headers=headers
+)
 
-            proxy = None
-            html = None
-            async with session.get(url, proxy=proxy, headers=headers) as response:
-                html = await response.text()
-                end_time = time.perf_counter()  # Stop timer
-                elapsed_time = end_time - start_time  # Calculate time taken to get response
-                status = response.status
+if response.status_code == 200:
+    data = response.json()
+    print(f"Success! Retrieved {{len(data)}} items")
+else:
+    print(f"Error: {{response.status_code}}")
+        '''
+        
+        print("\nGenerated Python code:")
+        print(python_code)
+        
+        return url, headers
+    
+    return None, None
 
-                logger.info(
-                    msg=f"status={status}, url={url}",
-                    extra={
-                        "elapsed_time": f"{elapsed_time:4f}",
-                    }
-                )
-
-                dir = "./data"
-                idx = url.split(
-                    "https://www.bizbuysell.com/new-york-businesses-for-sale/")[-1]
-                loc = f"{dir}/bizbuysell-ny-{idx}.html"
-
-                async with aiofiles.open(loc, mode="w") as fd:
-                    await fd.write(html)
-
-
-async def dispatch(url, settings):
-    await HTTPClientDownloader(url, settings)
-
-async def main(start_urls, settings):
-    tasks = []
-    for url in start_urls:
-        task = asyncio.create_task(dispatch(url, settings))
-        tasks.append(task)
-
-    results = await asyncio.gather(*tasks)
-    print(f"total requests", len(results))
-
-if __name__ == '__main__':
-    settings = {
-        "max_tcp_connections": 1,
-        "proxies": [
-            "http://localhost:8765",
-        ],
-        "rate_per_host": {
-            'www.bizbuysell.com': {
-                "limit": AsyncLimiter(10, 60), # 10 reqs/min
-            },
-        }
-    }
-
-    start_urls = []
-    start, end = 1, 13  # demo purpose
-    for i in range(start, end):
-        url = f"https://www.bizbuysell.com/new-york-businesses-for-sale/{i}"
-        start_urls.append(url)
-
-    asyncio.run(main(start_urls, settings))
+# Run the analysis
+if __name__ == "__main__":
+    analyze_network_traffic()
+    
+    # Example cURL command (replace with one you find)
+    example_curl = """curl 'https://api.bizbuysell.com/v1/listings?location=California&page=1' \
+  -H 'authority: www.bizbuysell.com' \
+  -H 'accept: application/json' \
+  -H 'user-agent: Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36' \
+  --compressed"""
+    
+    print("\nExample conversion:")
+    curl_to_python(example_curl)
