@@ -1,38 +1,63 @@
 #!/usr/bin/env python3
 """
 BizBuySell Business Listings Scraper
-Scrapes business listings from BizBuySell.com
+Scrapes business listings from BizBuySell.com using Selenium
 """
 
-import requests
+from selenium import webdriver
+from selenium.webdriver.common.by import By
+from selenium.webdriver.support.ui import WebDriverWait
+from selenium.webdriver.support import expected_conditions as EC
+from selenium.webdriver.chrome.options import Options
 from bs4 import BeautifulSoup
 import json
 import csv
-import time
 from typing import List, Dict
-import sys
+import time
 
 
 class BizBuySellScraper:
-    def __init__(self):
+    def __init__(self, headless: bool = False):
+        """
+        Initialize the scraper with Selenium WebDriver
+        
+        Args:
+            headless: Run browser in headless mode (default: False)
+        """
         self.base_url = "https://www.bizbuysell.com"
-        self.headers = {
-            'User-Agent': 'Mozilla/5.0 (Windows NT 10.0; Win64; x64) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/91.0.4472.124 Safari/537.36',
-            'Accept': 'text/html,application/xhtml+xml,application/xml;q=0.9,image/webp,*/*;q=0.8',
-            'Accept-Language': 'en-US,en;q=0.5',
-            'Accept-Encoding': 'gzip, deflate, br',
-            'Connection': 'keep-alive',
-            'Upgrade-Insecure-Requests': '1',
-        }
-        self.session = requests.Session()
-        self.session.headers.update(self.headers)
+        self.driver = None
+        self.headless = headless
+        self._setup_driver()
     
-    def scrape_listings(self, url: str) -> List[Dict]:
+    def _setup_driver(self):
+        """Setup Chrome WebDriver with appropriate options"""
+        chrome_options = Options()
+        if self.headless:
+            chrome_options.add_argument('--headless')
+        chrome_options.add_argument('--no-sandbox')
+        chrome_options.add_argument('--disable-dev-shm-usage')
+        chrome_options.add_argument('--disable-blink-features=AutomationControlled')
+        chrome_options.add_experimental_option("excludeSwitches", ["enable-automation"])
+        chrome_options.add_experimental_option('useAutomationExtension', False)
+        chrome_options.add_argument('user-agent=Mozilla/5.0 (Macintosh; Intel Mac OS X 10_15_7) AppleWebKit/537.36 (KHTML, like Gecko) Chrome/120.0.0.0 Safari/537.36')
+        
+        try:
+            self.driver = webdriver.Chrome(options=chrome_options)
+            # Execute script to remove webdriver property
+            self.driver.execute_script("Object.defineProperty(navigator, 'webdriver', {get: () => undefined})")
+        except Exception as e:
+            print(f"Error setting up Chrome driver: {e}")
+            print("Make sure ChromeDriver is installed and in your PATH.")
+            print("You can install it with: brew install chromedriver (macOS) or download from https://chromedriver.chromium.org/")
+            raise
+    
+    def scrape_listings(self, url: str, wait_time: int = 5) -> List[Dict]:
         """
         Scrape business listings from the given URL
         
         Args:
             url: The URL to scrape
+            wait_time: Time to wait for page to load (seconds)
             
         Returns:
             List of dictionaries containing business listing data
@@ -40,10 +65,21 @@ class BizBuySellScraper:
         print(f"Scraping: {url}")
         
         try:
-            response = self.session.get(url, timeout=30)
-            response.raise_for_status()
+            self.driver.get(url)
+            # Wait for page to load
+            time.sleep(wait_time)
             
-            soup = BeautifulSoup(response.text, 'html.parser')
+            # Wait for listings to appear (if they exist)
+            try:
+                WebDriverWait(self.driver, 10).until(
+                    EC.presence_of_element_located((By.TAG_NAME, "body"))
+                )
+            except:
+                pass
+            
+            # Get page source and parse with BeautifulSoup
+            page_source = self.driver.page_source
+            soup = BeautifulSoup(page_source, 'html.parser')
             listings = []
             
             # Try multiple possible selectors for listings
@@ -91,7 +127,7 @@ class BizBuySellScraper:
             if not listings:
                 print("\nWarning: No structured listings found. Saving page content for inspection.")
                 with open('page_content.html', 'w', encoding='utf-8') as f:
-                    f.write(response.text)
+                    f.write(page_source)
                 print("Page HTML saved to 'page_content.html' for manual inspection.")
                 
                 # Try to extract any useful information from the page
@@ -101,12 +137,16 @@ class BizBuySellScraper:
             
             return listings
             
-        except requests.exceptions.RequestException as e:
-            print(f"Error fetching URL: {e}")
-            return []
         except Exception as e:
-            print(f"Error parsing page: {e}")
+            print(f"Error scraping URL: {e}")
+            import traceback
+            traceback.print_exc()
             return []
+    
+    def __del__(self):
+        """Clean up: close the browser"""
+        if self.driver:
+            self.driver.quit()
     
     def _extract_listing_data(self, listing_element, index: int) -> Dict:
         """
@@ -231,17 +271,23 @@ class BizBuySellScraper:
 def main():
     url = "https://www.bizbuysell.com/businesses-for-sale/?q=bHQ9MzAsNDAsODA%3D"
     
-    scraper = BizBuySellScraper()
-    listings = scraper.scrape_listings(url)
-    
-    if listings:
-        scraper.print_listings(listings)
-        scraper.save_to_json(listings)
-        scraper.save_to_csv(listings)
-    else:
-        print("\nNo listings were extracted. The page might use JavaScript to load content.")
-        print("You may need to use Selenium or Playwright for dynamic content.")
-        print("The page HTML has been saved to 'page_content.html' for inspection.")
+    scraper = None
+    try:
+        scraper = BizBuySellScraper(headless=False)  # Set to True to run without opening browser window
+        listings = scraper.scrape_listings(url, wait_time=5)
+        
+        if listings:
+            scraper.print_listings(listings)
+            scraper.save_to_json(listings)
+            scraper.save_to_csv(listings)
+        else:
+            print("\nNo listings were extracted.")
+            print("The page HTML has been saved to 'page_content.html' for inspection.")
+    except Exception as e:
+        print(f"Error: {e}")
+    finally:
+        if scraper and scraper.driver:
+            scraper.driver.quit()
 
 
 if __name__ == "__main__":
